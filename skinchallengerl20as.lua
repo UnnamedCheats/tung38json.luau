@@ -2404,6 +2404,7 @@ local equip, favs = {}, {}
 local cwep, vprof, lwep
 local lpname = lp.Name
 local fcache = {}
+local randomSlots = {} -- [weapon] = { [ctype] = true }
 
 -- MUST exist before dctrl inventory hooks (loadout calls Get during boot)
 local cosmeticGuiState = {
@@ -3629,25 +3630,36 @@ end
 
 local function cosmeticMatchesWeapon(data, weapon)
 	if not data then return false end
+	local dtype = tostring(data.Type or "")
+	-- Wraps / charms / finishers often apply to all weapons
+	if dtype == "Wrap" or dtype == "Charm" or dtype == "Finisher" then
+		local itemName = data.ItemName or data.WeaponName or data.Weapon or data.Item
+		if itemName and weapon and tostring(itemName) ~= "" then
+			return tostring(itemName):lower() == tostring(weapon):lower()
+		end
+		return true
+	end
 	local itemName = data.ItemName or data.WeaponName or data.Weapon or data.Item
 	if itemName then
 		return tostring(itemName):lower() == tostring(weapon or ""):lower()
 	end
-	return data.Type ~= "Skin"
+	-- Skin without item binding: still show
+	return true
 end
 
 local _rebuildCosmeticListsAt = 0
-local function rebuildCosmeticLists()
+local function rebuildCosmeticLists(force)
 	local now = os.clock()
-	if now - _rebuildCosmeticListsAt < 0.08 then
+	if not force and now - _rebuildCosmeticListsAt < 0.05 then
 		return
 	end
 	_rebuildCosmeticListsAt = now
+	if type(cosmeticGuiState) ~= "table" then return end
 	table.clear(cosmeticGuiState.Weapons)
 	table.clear(cosmeticGuiState.Cosmetics)
 
-	for name, data in pairs(coss) do
-		if not banned(name) and data.Type == "Weapon" then
+	for name, data in pairs(coss or {}) do
+		if type(data) == "table" and not banned(name) and data.Type == "Weapon" then
 			local dispName = displayName(name, data)
 			local dispImg = iconFrom(data, ilib.Items and ilib.Items[name] and ilib.Items[name].Image, name)
 			if equip[name] and equip[name].Skin then
@@ -3658,13 +3670,13 @@ local function rebuildCosmeticLists()
 			table.insert(cosmeticGuiState.Weapons, {
 				Name = name,
 				Display = dispName,
-				Image = dispImg,
+				Image = dispImg or "",
 				Data = data
 			})
 		end
 	end
 
-	if #cosmeticGuiState.Weapons == 0 and ilib.ItemsAlphabetized then
+	if #cosmeticGuiState.Weapons == 0 and ilib and ilib.ItemsAlphabetized then
 		for _, name in ipairs(ilib.ItemsAlphabetized) do
 			local data = ilib.Items and ilib.Items[name]
 			if data and not banned(name) then
@@ -3678,7 +3690,7 @@ local function rebuildCosmeticLists()
 				table.insert(cosmeticGuiState.Weapons, {
 					Name = name,
 					Display = dispName,
-					Image = dispImg,
+					Image = dispImg or "",
 					Data = data
 				})
 			end
@@ -3690,11 +3702,12 @@ local function rebuildCosmeticLists()
 		cosmeticGuiState.SelectedWeapon = cosmeticGuiState.Weapons[1].Name
 	end
 
-	local mode = cosmeticGuiState.Mode
-	for name, data in pairs(coss) do
-		if not banned(name) and data.Type == mode and cosmeticMatchesWeapon(data, cosmeticGuiState.SelectedWeapon) then
-			local img = iconFrom(data, nil, name)
-			if type(img) == "string" and img ~= "" then
+	local mode = tostring(cosmeticGuiState.Mode or "Skin")
+	for name, data in pairs(coss or {}) do
+		if type(data) == "table" and not banned(name) then
+			local dtype = tostring(data.Type or "")
+			if dtype == mode and cosmeticMatchesWeapon(data, cosmeticGuiState.SelectedWeapon) then
+				local img = iconFrom(data, nil, name) or ""
 				table.insert(cosmeticGuiState.Cosmetics, {
 					Name = name,
 					Display = displayName(name, data),
@@ -3848,11 +3861,38 @@ local function applyCosmeticToWeapon(weapon, cosmeticName, ctype, skipRebuild)
 
 	if not cosmeticName or cosmeticName == "" or cosmeticName == "None" then
 		equip[weapon][ctype] = nil
+		if randomSlots[weapon] then randomSlots[weapon][ctype] = nil end
 	else
 		if cosmeticName == "__random" then
-			local pool = cosmeticGuiState.Cosmetics
-			local pick = pool[math.random(1, math.max(1, #pool))]
-			cosmeticName = pick and pick.Name or nil
+			randomSlots[weapon] = randomSlots[weapon] or {}
+			randomSlots[weapon][ctype] = true
+			local pool = {}
+			pcall(function()
+				rebuildCosmeticLists(true)
+				for _, entry in ipairs(cosmeticGuiState.Cosmetics or {}) do
+					if entry and entry.Name and entry.Name ~= "__random" then
+						pool[#pool + 1] = entry.Name
+					end
+				end
+			end)
+			if #pool == 0 then
+				pcall(function()
+					for name, data in pairs(coss or {}) do
+						if type(data) == "table" and tostring(data.Type or "") == tostring(ctype) and not banned(name) then
+							if cosmeticMatchesWeapon(data, weapon) then
+								pool[#pool + 1] = name
+							end
+						end
+					end
+				end)
+			end
+			if #pool > 0 then
+				cosmeticName = pool[math.random(1, #pool)]
+			else
+				cosmeticName = nil
+			end
+		else
+			if randomSlots[weapon] then randomSlots[weapon][ctype] = nil end
 		end
 		local cloned = cosmeticName and clonecos(cosmeticName, ctype)
 		if cloned then
@@ -4090,8 +4130,8 @@ local function makeCosmeticChanger()
 			end
 			modeButton.Text = mode:lower() .. "  >"
 			modeMenu.Visible = false
-			rebuildCosmeticLists()
-			task.defer(function()
+			rebuildCosmeticLists(true)
+			pcall(function()
 				if cosmeticGuiState.Refresh then cosmeticGuiState.Refresh() end
 			end)
 		end)
@@ -4369,7 +4409,7 @@ local function makeCosmeticChanger()
 					else
 						cosmeticGuiState.SelectedCosmetic = nil
 					end
-					rebuildCosmeticLists()
+					rebuildCosmeticLists(true)
 					refresh()
 				end, function(chosen)
 					cosmeticGuiState.SelectedWeapon = chosen.Name
@@ -4547,6 +4587,53 @@ task.spawn(function()
 				end
 			end
 		end)
+	end)
+end)
+
+
+local function rerollRandomSkins()
+	pcall(function()
+		for weapon, modes in pairs(randomSlots) do
+			if type(modes) == "table" then
+				for ctype, on in pairs(modes) do
+					if on then
+						-- keep random flag; applyCosmeticToWeapon with __random will re-set it
+						applyCosmeticToWeapon(weapon, "__random", ctype, true)
+						task.defer(forceCosmeticUpdate, weapon, ctype)
+					end
+				end
+			end
+		end
+		pcall(function()
+			rebuildinv()
+			saferep("CosmeticInventory")
+			saferep("WeaponInventory")
+		end)
+	end)
+end
+
+pcall(function()
+	lp.CharacterAdded:Connect(function()
+		task.delay(0.35, rerollRandomSkins)
+	end)
+end)
+
+-- also watch common round markers
+pcall(function()
+	local rs = game:GetService("ReplicatedStorage")
+	for _, name in ipairs({ "RoundStatus", "GameStatus", "MatchStatus", "Status" }) do
+		local v = rs:FindFirstChild(name, true)
+		if v and (v:IsA("StringValue") or v:IsA("IntValue") or v:IsA("BoolValue")) then
+			v:GetPropertyChangedSignal("Value"):Connect(function()
+				task.delay(0.25, rerollRandomSkins)
+			end)
+		end
+	end
+end)
+
+pcall(function()
+	workspace:GetAttributeChangedSignal("Round"):Connect(function()
+		task.delay(0.25, rerollRandomSkins)
 	end)
 end)
 
