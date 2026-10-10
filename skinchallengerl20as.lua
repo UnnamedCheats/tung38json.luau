@@ -1,3 +1,5 @@
+
+
 shared = shared or {}
 local genv = (type(getgenv) == "function" and getgenv()) or _G
 
@@ -1223,134 +1225,10 @@ end
 
 local function createFistsReplacementPart(part, meshId, textureId, meshScale, rotation)
 	return false
-	if not (part and part:IsA("BasePart")) then return false end
-	if type(isArmOrHandPart) == "function" and isArmOrHandPart(part) then
-		return false
-	end
-	do
-		local skip = false
-		pcall(function()
-			local plr = game:GetService("Players").LocalPlayer
-			local char = plr and plr.Character
-			if char and part:IsDescendantOf(char) then skip = true end
-		end)
-		if skip then return false end
-	end
-	local keepColor = part.Color
-	local keepMat = part.Material
-	for _, child in ipairs(part:GetChildren()) do
-		if child:IsA("SpecialMesh") or child:IsA("MeshPart") or child.Name == "__LionCustomFistsMesh" then
-			child:Destroy()
-		end
-	end
-
-	part.Transparency = 1
-	part.LocalTransparencyModifier = 1
-	part.CanCollide = false
-	part.CanTouch = false
-	part.CanQuery = false
-	part.Massless = true
-	part:SetAttribute("__LionFistsHiddenAnchor", true)
-	part:SetAttribute("IgnoreTransparency", true)
-
-	local replacement = Instance.new("Part")
-	replacement.Name = "__LionCustomFistsMesh"
-	replacement.Size = part.Size
-	replacement.CFrame = part.CFrame * rotationCFrameFromDegrees(rotation)
-	replacement.Anchored = false
-	replacement.CanCollide = false
-	replacement.CanTouch = false
-	replacement.CanQuery = false
-	replacement.Massless = true
-	replacement.Transparency = 0
-	replacement.LocalTransparencyModifier = 0
-	pcall(function()
-		replacement.Color = keepColor or part.Color
-		replacement.Material = keepMat or part.Material
-		if replacement.Color == Color3.new(0, 0, 0) or replacement.Color == Color3.fromRGB(0, 0, 0) then
-			replacement.Color = Color3.fromRGB(255, 204, 153)
-		end
-	end)
-	replacement:SetAttribute("__LionCustomFistsMesh", true)
-	replacement:SetAttribute("IgnoreTransparency", true)
-	replacement.Parent = part
-
-	local mesh = Instance.new("SpecialMesh")
-	mesh.MeshType = Enum.MeshType.FileMesh
-	mesh.MeshId = meshId
-	pcall(function()
-		if textureId and textureId ~= "" then
-			mesh.TextureId = textureId
-		end
-	end)
-	mesh.Scale = meshScale or Vector3.new(0.1, 0.1, 0.1)
-	pcall(function() mesh.VertexColor = Vector3.new(1, 1, 1) end)
-	mesh.Parent = replacement
-
-	local weld = Instance.new("WeldConstraint")
-	weld.Name = "__LionCustomFistsMeshWeld"
-	weld.Part0 = part
-	weld.Part1 = replacement
-	weld.Parent = replacement
-	return true
 end
 
-local function getFistsMeshSignature(profile)
-	local scale = profile.MeshScale or Vector3.zero
-	local leftRotation = profile.LeftRotation or Vector3.zero
-	local rightRotation = profile.RightRotation or Vector3.zero
-	return table.concat({
-		tostring(profile.LeftMeshId or ""),
-		tostring(profile.LeftTextureId or ""),
-		tostring(profile.RightMeshId or ""),
-		tostring(profile.RightTextureId or ""),
-		tostring(scale.X),
-		tostring(scale.Y),
-		tostring(scale.Z),
-		tostring(leftRotation.X),
-		tostring(leftRotation.Y),
-		tostring(leftRotation.Z),
-		tostring(rightRotation.X),
-		tostring(rightRotation.Y),
-		tostring(rightRotation.Z),
-		tostring(profile.ReplacementVersion or 1)
-	}, "|")
-end
-
-local function applyFistsMeshProfile(root, profile)
+function applyFistsMeshProfile(root, profile)
 	return false
-	if typeof(root) ~= "Instance" or not profile then return false end
-	do
-		local skip = false
-		pcall(function()
-			local plr = game:GetService("Players").LocalPlayer
-			local char = plr and plr.Character
-			if char and root:IsDescendantOf(char) then skip = true end
-		end)
-		if skip then return false end
-		if type(isArmOrHandPart) == "function" and isArmOrHandPart(root) then return false end
-	end
-	local signature = getFistsMeshSignature(profile)
-	if root:GetAttribute("__LionFistsMeshSkin") == profile.Skin
-		and root:GetAttribute("__LionFistsMeshSignature") == signature
-		and (root:GetAttribute("__LionFistsMeshCount") or 0) > 0 then
-		return true
-	end
-
-	local left = findDescendantByName(root, profile.LeftPartName or "LeftItem")
-	local right = findDescendantByName(root, profile.RightPartName or "RightItem")
-	local applied = 0
-	if createFistsReplacementPart(left, profile.LeftMeshId, profile.LeftTextureId, profile.MeshScale, profile.LeftRotation) then
-		applied += 1
-	end
-	if createFistsReplacementPart(right, profile.RightMeshId, profile.RightTextureId, profile.MeshScale, profile.RightRotation) then
-		applied += 1
-	end
-
-	root:SetAttribute("__LionFistsMeshSkin", profile.Skin)
-	root:SetAttribute("__LionFistsMeshSignature", signature)
-	root:SetAttribute("__LionFistsMeshCount", applied)
-	return applied > 0
 end
 
 local function hideBowMeshAnchor(part)
