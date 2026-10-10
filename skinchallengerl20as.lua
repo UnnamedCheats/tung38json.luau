@@ -1222,6 +1222,7 @@ local function applyRpgMeshProfile(root, profile, options)
 end
 
 local function createFistsReplacementPart(part, meshId, textureId, meshScale, rotation)
+	return false
 	if not (part and part:IsA("BasePart")) then return false end
 	if type(isArmOrHandPart) == "function" and isArmOrHandPart(part) then
 		return false
@@ -1317,6 +1318,7 @@ local function getFistsMeshSignature(profile)
 end
 
 local function applyFistsMeshProfile(root, profile)
+	return false
 	if typeof(root) ~= "Instance" or not profile then return false end
 	do
 		local skip = false
@@ -2404,9 +2406,8 @@ local equip, favs = {}, {}
 local cwep, vprof, lwep
 local lpname = lp.Name
 local fcache = {}
-local randomSlots = {} -- [weapon] = { [ctype] = true }
+local randomSlots = {} 
 
--- MUST exist before dctrl inventory hooks (loadout calls Get during boot)
 local cosmeticGuiState = {
 	Wanted = false,
 	SkinsEnabled = false,
@@ -3584,7 +3585,6 @@ for wname, wdata in equip do
 	end
 end
 
--- cosmeticGuiState created early before inventory hooks
 if type(cosmeticGuiState) ~= "table" then
 	cosmeticGuiState = {
 		Wanted = false,
@@ -3631,7 +3631,7 @@ end
 local function cosmeticMatchesWeapon(data, weapon)
 	if not data then return false end
 	local dtype = tostring(data.Type or "")
-	-- Wraps / charms / finishers often apply to all weapons
+	
 	if dtype == "Wrap" or dtype == "Charm" or dtype == "Finisher" then
 		local itemName = data.ItemName or data.WeaponName or data.Weapon or data.Item
 		if itemName and weapon and tostring(itemName) ~= "" then
@@ -3643,7 +3643,7 @@ local function cosmeticMatchesWeapon(data, weapon)
 	if itemName then
 		return tostring(itemName):lower() == tostring(weapon or ""):lower()
 	end
-	-- Skin without item binding: still show
+	
 	return true
 end
 
@@ -4497,7 +4497,7 @@ local function makeCosmeticChanger()
 				genv.WrathfulSkinChangerOnClose()
 			end
 			if type(genv.WrathfulSkinChangerSetVisible) == "function" then
-				-- ensure toggle path can re-enable later; equip is kept
+				
 			end
 		end)
 	end)
@@ -4516,88 +4516,113 @@ local function makeCosmeticChanger()
 	return gui
 end
 
-
--- Keep local player hands/arms at BodyColors (prevent black hands)
-task.spawn(function()
+local function wrathRestoreHandColors()
 	local Players = game:GetService("Players")
-	local RunService = game:GetService("RunService")
-	local function skinToneFallback()
-		return Color3.fromRGB(255, 204, 153)
+	local plr = Players.LocalPlayer
+	if not plr then return end
+	local char = plr.Character
+	local fallback = Color3.fromRGB(255, 204, 153)
+	local leftC, rightC = fallback, fallback
+	if char then
+		local bc = char:FindFirstChildOfClass("BodyColors")
+		if bc then
+			pcall(function()
+				leftC = bc.LeftArmColor.Color
+				rightC = bc.RightArmColor.Color
+			end)
+		end
 	end
-	local function applyBodyColors(container, leftC, rightC)
+	if leftC.R + leftC.G + leftC.B < 0.05 then leftC = fallback end
+	if rightC.R + rightC.G + rightC.B < 0.05 then rightC = fallback end
+
+	local function fixPart(inst, isLeft)
+		if not inst or not inst:IsA("BasePart") then return end
+		local col = isLeft and leftC or rightC
+		pcall(function()
+			inst.Color = col
+			if inst:IsA("MeshPart") then
+				local tid = tostring(inst.TextureID or "")
+				if tid == "" or tid == "rbxassetid://0" then
+					inst.Color = col
+				end
+			end
+			for _, ch in ipairs(inst:GetChildren()) do
+				if ch:IsA("SpecialMesh") then
+					pcall(function() ch.VertexColor = Vector3.new(1, 1, 1) end)
+				end
+				if ch.Name == "__LionCustomFistsMesh" or ch:GetAttribute("__LionCustomFistsMesh") then
+					pcall(function()
+						ch:Destroy()
+					end)
+				end
+			end
+			if inst.Name == "__LionCustomFistsMesh" or inst:GetAttribute("__LionCustomFistsMesh") then
+				pcall(function() inst:Destroy() end)
+			end
+			if inst:GetAttribute("__LionFistsHiddenAnchor") then
+				pcall(function()
+					inst.Transparency = 0
+					inst.LocalTransparencyModifier = 0
+					inst:SetAttribute("__LionFistsHiddenAnchor", nil)
+				end)
+			end
+		end)
+	end
+
+	local function scan(container)
 		if not container then return end
 		for _, inst in ipairs(container:GetDescendants()) do
 			if inst:IsA("BasePart") then
 				local n = string.lower(inst.Name)
-				if n:find("hand", 1, true) or n:find("arm", 1, true) or n:find("glove", 1, true) then
-					if n:find("left", 1, true) then
-						inst.Color = leftC
-					elseif n:find("right", 1, true) then
-						inst.Color = rightC
-					else
-						inst.Color = leftC
+				if n:find("hand", 1, true) or n:find("arm", 1, true) or n:find("glove", 1, true)
+					or n == "leftitem" or n == "rightitem"
+					or n:find("upperarm", 1, true) or n:find("lowerarm", 1, true) then
+					local isLeft = n:find("left", 1, true) ~= nil
+					local isRight = n:find("right", 1, true) ~= nil
+					if isLeft or not isRight then
+						fixPart(inst, true)
 					end
-					-- undo black mesh look
-					if inst:IsA("MeshPart") and (inst.TextureID == "" or inst.TextureID == "rbxassetid://0") then
-						-- leave texture; color still applies on many materials
+					if isRight then
+						fixPart(inst, false)
 					end
 				end
 				if inst.Name == "__LionCustomFistsMesh" or inst:GetAttribute("__LionCustomFistsMesh") then
-					if inst.Color == Color3.new(0, 0, 0) then
-						inst.Color = leftC
-					end
+					pcall(function() inst:Destroy() end)
 				end
 			end
 		end
 	end
+
+	if char then scan(char) end
+	pcall(function()
+		local vms = workspace:FindFirstChild("ViewModels")
+		if vms then
+			for _, vm in ipairs(vms:GetChildren()) do
+				scan(vm)
+			end
+		end
+		local cam = workspace.CurrentCamera
+		if cam then scan(cam) end
+	end)
+end
+
+task.spawn(function()
+	local RunService = game:GetService("RunService")
 	local acc = 0
 	RunService.Heartbeat:Connect(function(dt)
 		acc += dt
-		if acc < 0.2 then return end
+		if acc < 0.1 then return end
 		acc = 0
-		pcall(function()
-			local plr = Players.LocalPlayer
-			if not plr then return end
-			local char = plr.Character
-			if not char then return end
-			local bc = char:FindFirstChildOfClass("BodyColors")
-			local leftC = skinToneFallback()
-			local rightC = skinToneFallback()
-			if bc then
-				pcall(function()
-					leftC = bc.LeftArmColor.Color
-					rightC = bc.RightArmColor.Color
-				end)
-			end
-			if leftC == Color3.new(0, 0, 0) then leftC = skinToneFallback() end
-			if rightC == Color3.new(0, 0, 0) then rightC = skinToneFallback() end
-			applyBodyColors(char, leftC, rightC)
-			local vms = workspace:FindFirstChild("ViewModels")
-			if vms then
-				for _, vm in ipairs(vms:GetChildren()) do
-					if string.find(vm.Name, plr.Name, 1, true) then
-						applyBodyColors(vm, leftC, rightC)
-					end
-				end
-			end
-			local cam = workspace.CurrentCamera
-			if cam then
-				for _, vm in ipairs(cam:GetChildren()) do
-					applyBodyColors(vm, leftC, rightC)
-				end
-			end
-		end)
+		pcall(wrathRestoreHandColors)
 	end)
 end)
 
-
 local function rerollRandomSkins()
 	pcall(function()
-		for weapon, modes in pairs(randomSlots) do
+		for weapon, modes in pairs(randomSlots or {}) do
 			if type(modes) == "table" then
 				for ctype, on in pairs(modes) do
 					if on then
-						-- keep random flag; applyCosmeticToWeapon with __random will re-set it
 						applyCosmeticToWeapon(weapon, "__random", ctype, true)
 						task.defer(forceCosmeticUpdate, weapon, ctype)
 					end
@@ -4609,32 +4634,37 @@ local function rerollRandomSkins()
 			saferep("CosmeticInventory")
 			saferep("WeaponInventory")
 		end)
+		task.defer(function()
+			pcall(wrathRestoreHandColors)
+		end)
 	end)
 end
 
 pcall(function()
-	lp.CharacterAdded:Connect(function()
-		task.delay(0.35, rerollRandomSkins)
-	end)
+	local lp2 = game:GetService("Players").LocalPlayer
+	if lp2 then
+		lp2.CharacterAdded:Connect(function()
+			task.delay(0.4, function()
+				rerollRandomSkins()
+				pcall(wrathRestoreHandColors)
+			end)
+		end)
+	end
 end)
 
--- also watch common round markers
 pcall(function()
 	local rs = game:GetService("ReplicatedStorage")
 	for _, name in ipairs({ "RoundStatus", "GameStatus", "MatchStatus", "Status" }) do
 		local v = rs:FindFirstChild(name, true)
 		if v and (v:IsA("StringValue") or v:IsA("IntValue") or v:IsA("BoolValue")) then
 			v:GetPropertyChangedSignal("Value"):Connect(function()
-				task.delay(0.25, rerollRandomSkins)
+				task.delay(0.3, function()
+					rerollRandomSkins()
+					pcall(wrathRestoreHandColors)
+				end)
 			end)
 		end
 	end
-end)
-
-pcall(function()
-	workspace:GetAttributeChangedSignal("Round"):Connect(function()
-		task.delay(0.25, rerollRandomSkins)
-	end)
 end)
 
 shared.LionCosmeticChanger = {
@@ -4724,9 +4754,6 @@ shared.LionCosmeticChanger = {
 	State = cosmeticGuiState
 }
 
--- visibility controlled by Wrathful skinchanger toggle
-
-
 	end
 
 	local ok, err = pcall(runBody)
@@ -4744,7 +4771,7 @@ end
 local function setVisible(vis)
 	vis = vis == true
 	if not boot() then
-		-- retry once after short delay (controllers may still be loading)
+		
 		task.spawn(function()
 			task.wait(1)
 			if boot() then
@@ -4761,7 +4788,7 @@ end
 genv.WrathfulSkinChangerInit = boot
 genv.WrathfulSkinChangerSetVisible = setVisible
 if type(shared.LionCosmeticChanger) ~= "table" then
-
+	
 end
 
 task.defer(function()
